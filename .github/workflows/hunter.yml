@@ -38,7 +38,7 @@ on:
         type: choice
         options: ['5', '10', '20']
       webhook_url:
-        description: 'Discord Webhook (optional)'
+        description: 'Discord Webhook URL (for live notifications)'
         required: false
         type: string
       proxy_count:
