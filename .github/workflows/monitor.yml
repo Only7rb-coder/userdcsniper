@@ -12,11 +12,32 @@ on:
         description: 'Discord Webhook URL'
         required: false
         type: string
+      gen_mode:
+        description: 'Generation mode'
+        required: true
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - short
+          - words
+          - mixed
+          - leet
+      gen_count:
+        description: 'Number to generate (if not none)'
+        required: true
+        default: '0'
+        type: string
+      gen_length:
+        description: 'Generated username length (e.g. 5-7, 3-5, 2-4)'
+        required: true
+        default: '5-7'
+        type: string
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours max per run
+    timeout-minutes: 360
 
     steps:
       - uses: actions/checkout@v4
@@ -30,4 +51,7 @@ jobs:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           WEBHOOK_URL: ${{ github.event.inputs.webhook_url }}
           MONITOR_INTERVAL: ${{ github.event.inputs.monitor_interval }}
+          GEN_MODE: ${{ github.event.inputs.gen_mode }}
+          GEN_COUNT: ${{ github.event.inputs.gen_count }}
+          GEN_LENGTH: ${{ github.event.inputs.gen_length }}
         run: python run_monitor.py
