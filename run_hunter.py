@@ -4,18 +4,16 @@ import os
 import sys
 import json
 
-sys.path.insert(0, 'src')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from proxy_harvester import ProxyHarvester
-from checker import DiscordUsernameChecker
-from username_gen import UsernameGenerator
+from src.proxy_harvester import ProxyHarvester
+from src.checker import DiscordUsernameChecker
+from src.username_gen import UsernameGenerator
 
 async def main():
-    # Step 1: Auto proxy harvest
     print("🔌 Step 1: Harvesting proxies...")
     harvester = ProxyHarvester(max_proxies=int(os.environ.get('PROXY_COUNT', 300)))
     
-    # Try to load cached proxies first
     if os.path.exists('proxies/working.json'):
         try:
             with open('proxies/working.json', 'r') as f:
@@ -26,7 +24,6 @@ async def main():
     
     await harvester.harvest()
     
-    # Save working proxies for next run
     os.makedirs('proxies', exist_ok=True)
     with open('proxies/working.json', 'w') as f:
         json.dump([{'host': p.host, 'port': p.port, 'protocol': p.protocol, 'latency': p.latency} 
@@ -34,7 +31,6 @@ async def main():
     
     print(f"✅ {len(harvester.working_proxies)} proxies ready")
     
-    # Build username list
     usernames = []
     source = os.environ.get('USERNAME_SOURCE', 'generate')
     
@@ -58,7 +54,6 @@ async def main():
     
     print(f"🎯 Hunting {len(usernames)} usernames...")
     
-    # Run checker
     checker = DiscordUsernameChecker(
         concurrency=int(os.environ.get('CONCURRENCY', 50)),
         timeout=int(os.environ.get('TIMEOUT', 10)),
