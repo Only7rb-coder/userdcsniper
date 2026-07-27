@@ -17,10 +17,6 @@ class UsernameGenerator:
 
     @classmethod
     def _parse_length(cls, length_spec: str) -> Tuple[Optional[int], Optional[int]]:
-        """
-        Parse length spec: '2' = exact 2, '2-4' = range, '3+' = min 3
-        Returns (min_len, max_len)
-        """
         length_spec = length_spec.strip()
         if '-' in length_spec:
             parts = length_spec.split('-')
@@ -33,20 +29,14 @@ class UsernameGenerator:
 
     @classmethod
     def generate(cls, count: int = 1000, pattern: str = "mixed", length: str = "2-32") -> Iterator[str]:
-        """
-        pattern: short | words | mixed | leet
-        length: exact (2), range (2-4), or min (3+)
-        """
         min_len, max_len = cls._parse_length(length)
         generated = set()
         
-        # Helper to check length
         def in_range(s: str) -> bool:
             return min_len <= len(s) <= max_len
 
         if pattern in ('short', 'mixed'):
             chars = string.ascii_lowercase + string.digits
-            # Only brute-force short lengths if requested
             for length_val in range(max(2, min_len), min(max_len + 1, 5)):
                 if len(generated) >= count:
                     break
