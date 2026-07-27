@@ -4,7 +4,6 @@ from typing import List, Iterator, Optional, Tuple
 import itertools
 
 class UsernameGenerator:
-    # Words that sound good, have character, might actually be available
     RARE_WORDS = [
         "abyssal", "boreal", "cryo", "drift", "ember", "fable", "glimmer",
         "hollow", "iris", "jolt", "kismet", "lunar", "mire", "nexus", "omen",
@@ -20,6 +19,12 @@ class UsernameGenerator:
     
     COOL_SUFFIXES = ["", "x", "z", "ify", "ism", "oid", "ite", "ine", "ic", "al"]
     
+    # Discord reserved words that can't be usernames
+    RESERVED = {
+        'discord', 'everyone', 'here', 'nitro', 'hypesquad', 'system',
+        'clyde', 'staff', 'mod', 'admin', 'support', 'official'
+    }
+
     @classmethod
     def _parse_length(cls, length_spec: str) -> Tuple[Optional[int], Optional[int]]:
         length_spec = length_spec.strip()
@@ -37,9 +42,9 @@ class UsernameGenerator:
         generated = set()
         
         def ok(s): 
-            return min_len <= len(s) <= max_len and cls._is_valid(s)
+            return cls._is_valid(s) and min_len <= len(s) <= max_len
 
-        # Strategy 1: Rare words + suffixes (highest chance of availability)
+        # Strategy 1: Rare words + suffixes
         if pattern in ('words', 'mixed'):
             for word in cls.RARE_WORDS:
                 if len(generated) >= count:
@@ -47,33 +52,36 @@ class UsernameGenerator:
                 for suffix in cls.COOL_SUFFIXES:
                     variants = [
                         f"{word}{suffix}",
-                        f"{suffix}{word}" if suffix else word,
-                        f"{word}_{suffix}" if suffix else word,
-                        f"{word}.{suffix}" if suffix else word,
+                        f"{word}_{suffix}" if suffix else None,
+                        f"{word}.{suffix}" if suffix else None,
                     ]
                     for v in variants:
-                        if ok(v) and v not in generated:
+                        if v and ok(v) and v not in generated:
                             generated.add(v)
                             yield v
         
-        # Strategy 2: Short random with structure (consonant-vowel pattern)
+        # Strategy 2: Pronounceable CVCVC patterns
         if pattern in ('short', 'mixed'):
             vowels = "aeiou"
             consonants = "bcdfghjklmnpqrstvwxyz"
-            for _ in range(min(count * 2, 10000)):
+            for _ in range(min(count * 3, 20000)):
                 if len(generated) >= count:
                     break
-                # CVCVC or VCVCV pattern - pronounceable
-                pattern_choice = random.choice([
-                    lambda: ''.join(random.choice(consonants) if i%2==0 else random.choice(vowels) for i in range(random.randint(min_len, max_len))),
-                    lambda: ''.join(random.choice(vowels) if i%2==0 else random.choice(consonants) for i in range(random.randint(min_len, max_len))),
-                ])
-                username = pattern_choice()
+                length_target = random.randint(min_len, max_len)
+                # CVCVC... or VCVCV... pattern
+                start_with_consonant = random.choice([True, False])
+                username = ""
+                for i in range(length_target):
+                    if start_with_consonant:
+                        username += random.choice(consonants) if i % 2 == 0 else random.choice(vowels)
+                    else:
+                        username += random.choice(vowels) if i % 2 == 0 else random.choice(consonants)
+                
                 if ok(username) and username not in generated:
                     generated.add(username)
                     yield username
         
-        # Strategy 3: Leet speak on rare words
+        # Strategy 3: Leet speak
         if pattern == 'leet':
             leet_map = {'a': '4', 'e': '3', 'i': '1', 'o': '0', 's': '5', 't': '7', 'g': '9'}
             for word in cls.RARE_WORDS[:40]:
@@ -86,33 +94,52 @@ class UsernameGenerator:
 
     @staticmethod
     def _is_valid(username: str) -> bool:
+        """Strict Discord username validation"""
+        if not username:
+            return False
         if not (2 <= len(username) <= 32):
             return False
+        # Must contain at least one letter (not purely numeric)
+        if not any(c in string.ascii_lowercase for c in username):
+            return False
+        # Cannot be reserved
+        if username.lower() in UsernameGenerator.RESERVED:
+            return False
+        # Start/end check
         if username[0] in '._' or username[-1] in '._':
             return False
+        # Consecutive special chars
         if '..' in username or '__' in username or '._' in username or '_.' in username:
             return False
+        # Allowed chars only
         allowed = set(string.ascii_lowercase + string.digits + '._')
-        return all(c in allowed for c in username)
+        if not all(c in allowed for c in username):
+            return False
+        return True
 
     @classmethod
     def from_file(cls, filepath: str) -> List[str]:
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
-                return [line.strip().lower() for line in f if line.strip()]
+                return [line.strip().lower() for line in f if line.strip() and cls._is_valid(line.strip().lower())]
         except FileNotFoundError:
             return []
     
     @classmethod
     def generate_watchlist_variants(cls, base_names: List[str]) -> List[str]:
-        """Generate variations of watchlist names to monitor"""
-        variants = set(base_names)
+        variants = set()
         for name in base_names:
-            # Common leet variations
-            leet = name.replace('a','4').replace('e','3').replace('i','1').replace('o','0')
-            variants.add(leet)
-            # With suffixes
+            clean = name.strip().lower()
+            if not cls._is_valid(clean):
+                continue
+            variants.add(clean)
+            # Leet variants
+            leet = clean.replace('a','4').replace('e','3').replace('i','1').replace('o','0').replace('s','5')
+            if cls._is_valid(leet) and leet != clean:
+                variants.add(leet)
+            # Suffixes
             for suffix in ['x', 'z', 'tv', 'gg', 'io']:
-                variants.add(f"{name}{suffix}")
-                variants.add(f"{name}_{suffix}")
-        return [v for v in variants if cls._is_valid(v)]
+                v = f"{clean}{suffix}"
+                if cls._is_valid(v):
+                    variants.add(v)
+        return sorted(variants)
