@@ -43,7 +43,7 @@ async def main():
     if source in ('generate', 'both'):
         count = int(os.environ.get('GENERATE_COUNT', 5000))
         pattern = os.environ.get('PATTERN', 'mixed')
-        length = os.environ.get('LENGTH', '2-32')  # <-- NEW
+        length = os.environ.get('LENGTH', '2-32')
         generated = list(UsernameGenerator.generate(count, pattern, length))
         usernames.extend(generated)
         print(f"🎲 Generated {len(generated)} usernames ({pattern}, length {length})")
