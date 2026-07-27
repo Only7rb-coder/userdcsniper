@@ -13,6 +13,8 @@ async def main():
     token = os.environ.get('DISCORD_TOKEN', '')
     if not token:
         print("❌ DISCORD_TOKEN not set! Set it in GitHub Secrets.")
+        print("   Repo Settings → Secrets and variables → Actions → New repository secret")
+        print("   Name: DISCORD_TOKEN")
         return 1
 
     webhook = os.environ.get('WEBHOOK_URL', '')
@@ -20,13 +22,28 @@ async def main():
 
     # Load watchlist
     watchlist = UsernameGenerator.from_file('watchlist.txt')
+
+    # Generate additional candidates if requested
+    mode = os.environ.get('GEN_MODE', 'none')  # none, short, words, mixed, leet
+    gen_count = int(os.environ.get('GEN_COUNT', '0'))
+    gen_length = os.environ.get('GEN_LENGTH', '5-7')
+
+    if mode != 'none' and gen_count > 0:
+        print(f"🎲 Generating {gen_count} usernames (mode: {mode}, length: {gen_length})...")
+        generated = list(UsernameGenerator.generate(gen_count, mode, gen_length))
+        watchlist.extend(generated)
+        watchlist = list(dict.fromkeys(watchlist))  # Remove duplicates
+        print(f"   Added {len(generated)} generated names")
+
     if not watchlist:
-        print("❌ watchlist.txt is empty! Add usernames to monitor.")
+        print("❌ No usernames to monitor!")
+        print("   Add names to watchlist.txt or enable generation")
         return 1
 
     print(f"👁️  Starting monitor for {len(watchlist)} usernames")
     print(f"⏰ Interval: {interval} minutes")
     print(f"🐌 Speed: 2-4 seconds between checks (human-like)")
+    print(f"🔒 Token: {token[:10]}... (hidden)")
 
     monitor = UsernameMonitor(token, webhook, interval)
     await monitor.run(watchlist)
