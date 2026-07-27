@@ -19,7 +19,7 @@ class CheckResult:
     proxy_used: Optional[str] = None
     response_time: float = 0.0
     error: Optional[str] = None
-    verified: bool = False  # Double-checked hit
+    verified: bool = False
 
 class DiscordUsernameChecker:
     def __init__(self, concurrency=50, timeout=10, delay_between=0.5, 
@@ -41,8 +41,8 @@ class DiscordUsernameChecker:
         self.results = []
         self.stats = {'checked': 0, 'available': 0, 'verified_hits': 0, 'errors': 0, 'start_time': None}
         
-    async def _do_check(self, session: aiohttp.ClientSession, username: str, proxy: Optional[Proxy]) -> tuple:
-        """Single check request. Returns (status, body_dict, response_time)"""
+    async def _do_check(self, session: aiohttp.ClientSession, username: str, proxy) -> tuple:
+        """Single check request. Returns (status, body_dict, response_time, proxy_str)"""
         proxy_str = str(proxy) if proxy else None
         start = time.time()
         
@@ -98,49 +98,51 @@ class DiscordUsernameChecker:
     async def check_username(self, session: aiohttp.ClientSession, username: str) -> CheckResult:
         async with self.semaphore:
             timestamp = datetime.now().isoformat()
+            proxy = self.proxy_harvester.get_proxy()
             
-            # First check
-            status1, body1, rt1, proxy_str = await self._do_check(session, username, self.proxy_harvester.get_proxy())
-            
-            # Parse first response
-            if status1 == 200:
-                # Potential hit! But need to verify - Discord sometimes returns 200 for invalid names
-                # Wait a moment and check again with different proxy
-                await asyncio.sleep(random.uniform(0.5, 1.5))
-                status2, body2, rt2, _ = await self._do_check(session, username, self.proxy_harvester.get_proxy())
+            try:
+                # First check
+                status1, body1, rt1, proxy_str = await self._do_check(session, username, proxy)
                 
-                if status2 == 200:
-                    # DOUBLE VERIFIED HIT
-                    return CheckResult(username, True, timestamp, proxy_str, rt1, None, True)
-                else:
-                    # First was a fluke
-                    return CheckResult(username, False, timestamp, proxy_str, rt1, f"unverified_200_second_{status2}", False)
-            
-            elif status1 == 400:
-                errors = body1.get('errors', {})
-                username_errors = errors.get('username', {})
-                
-                if username_errors:
-                    error_str = str(username_errors).lower()
-                    if 'already' in error_str or 'taken' in error_str:
-                        return CheckResult(username, False, timestamp, proxy_str, rt1, "taken")
+                # Parse first response
+                if status1 == 200:
+                    # Potential hit! Verify with second check
+                    await asyncio.sleep(random.uniform(0.5, 1.5))
+                    status2, body2, rt2, _ = await self._do_check(session, username, self.proxy_harvester.get_proxy())
+                    
+                    if status2 == 200:
+                        # DOUBLE VERIFIED
+                        return CheckResult(username, True, timestamp, proxy_str, rt1, None, True)
                     else:
-                        return CheckResult(username, False, timestamp, proxy_str, rt1, "invalid")
+                        return CheckResult(username, False, timestamp, proxy_str, rt1, f"unverified_200_second_{status2}", False)
+                
+                elif status1 == 400:
+                    errors = body1.get('errors', {})
+                    username_errors = errors.get('username', {})
+                    
+                    if username_errors:
+                        error_str = str(username_errors).lower()
+                        if 'already' in error_str or 'taken' in error_str:
+                            return CheckResult(username, False, timestamp, proxy_str, rt1, "taken")
+                        else:
+                            return CheckResult(username, False, timestamp, proxy_str, rt1, "invalid")
+                    else:
+                        return CheckResult(username, False, timestamp, proxy_str, rt1, "blocked")
+                
+                elif status1 == 429:
+                    return CheckResult(username, False, timestamp, proxy_str, rt1, "rate_limited")
+                
+                elif status1 == -1:
+                    return CheckResult(username, False, timestamp, proxy_str, rt1, "timeout")
+                
+                elif status1 == -2:
+                    return CheckResult(username, False, timestamp, proxy_str, rt1, "request_error")
+                
                 else:
-                    # 400 with no username error = might be available but blocked
-                    return CheckResult(username, False, timestamp, proxy_str, rt1, "blocked")
+                    return CheckResult(username, False, timestamp, proxy_str, rt1, f"status_{status1}")
             
-            elif status1 == 429:
-                return CheckResult(username, False, timestamp, proxy_str, rt1, "rate_limited")
-            
-            elif status1 == -1:
-                return CheckResult(username, False, timestamp, proxy_str, rt1, "timeout")
-            
-            elif status1 == -2:
-                return CheckResult(username, False, timestamp, proxy_str, rt1, "request_error")
-            
-            else:
-                return CheckResult(username, False, timestamp, proxy_str, rt1, f"status_{status1}")
+            except Exception as e:
+                return CheckResult(username, False, timestamp, str(proxy) if proxy else None, 0, f"checker_exception_{str(e)[:50]}")
             
             finally:
                 await asyncio.sleep(self.delay_between * random.uniform(0.8, 1.2))
