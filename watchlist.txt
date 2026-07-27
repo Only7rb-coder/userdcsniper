@@ -1,0 +1,8 @@
+# Add usernames you want to monitor here
+# One per line, 2-32 chars, lowercase
+# Examples:
+alpha
+neo
+zephyr
+cryo
+ember
