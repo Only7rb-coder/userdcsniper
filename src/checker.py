@@ -25,12 +25,16 @@ class DiscordUsernameChecker:
         self.concurrency = concurrency
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self.delay_between = delay_between
-        self.webhook = WebhookNotifier(webhook_url) if webhook_url else None
+        # FIX 1: Only create webhook if URL is actually provided and valid
+        self.webhook = None
+        if webhook_url and webhook_url.strip() and webhook_url.startswith('http'):
+            self.webhook = WebhookNotifier(webhook_url.strip())
         self.proxy_harvester = proxy_harvester or ProxyHarvester()
         self.semaphore = asyncio.Semaphore(concurrency)
         self.results: List[CheckResult] = []
         self.stats = {'checked': 0, 'available': 0, 'taken': 0, 'errors': 0, 'start_time': None}
         self._last_webhook_progress = 0
+        self._progress_queue = asyncio.Queue()  # FIX 2: Decouple webhooks from check loop
         
     async def check_username(self, session: aiohttp.ClientSession, username: str) -> CheckResult:
         async with self.semaphore:
@@ -106,43 +110,74 @@ class DiscordUsernameChecker:
         else:
             return CheckResult(username, False, timestamp, proxy_str, response_time, f"status_{resp.status}")
     
-    async def _send_progress(self, total: int):
-        elapsed = time.time() - self.stats['start_time']
-        progress = (self.stats['checked'] / total) * 100 if total > 0 else 0
-        milestone = int(progress / 10) * 10
-        
-        if milestone > self._last_webhook_progress or self.stats['checked'] % 500 == 0:
-            if self.webhook:
-                await self.webhook.notify_progress(
-                    self.stats['checked'], total, self.stats['available'],
-                    elapsed, len(self.proxy_harvester.working_proxies)
-                )
-            self._last_webhook_progress = milestone
+    async def _webhook_worker(self):
+        """FIX 2: Background task that drains webhook queue without blocking checks"""
+        while True:
+            try:
+                msg_type, data = await asyncio.wait_for(self._progress_queue.get(), timeout=1.0)
+                if msg_type == 'stop':
+                    break
+                    
+                if not self.webhook:
+                    continue
+                    
+                if msg_type == 'start':
+                    await self.webhook.notify_start(**data)
+                elif msg_type == 'proxies':
+                    await self.webhook.notify_proxies_ready(**data)
+                elif msg_type == 'progress':
+                    await self.webhook.notify_progress(**data)
+                elif msg_type == 'hit':
+                    await self.webhook.notify_hit(data)
+                elif msg_type == 'complete':
+                    await self.webhook.notify_complete(**data)
+                elif msg_type == 'error':
+                    await self.webhook.notify_error(data)
+                    
+            except asyncio.TimeoutError:
+                continue
+            except Exception as e:
+                print(f"[WEBHOOK] Error: {e}")
+    
+    def _queue_webhook(self, msg_type, data):
+        """Non-blocking queue put for webhooks"""
+        try:
+            self._progress_queue.put_nowait((msg_type, data))
+        except asyncio.QueueFull:
+            pass  # Drop webhook if queue is backed up
     
     async def run(self, usernames: List[str]) -> List[CheckResult]:
         self.stats['start_time'] = time.time()
         total = len(usernames)
         
-        if self.webhook:
-            await self.webhook.notify_start(
-                total, self.concurrency, 
-                os.environ.get('LENGTH', '2-32'),
-                os.environ.get('PATTERN', 'mixed'),
-                0
-            )
+        # Start webhook worker in background
+        webhook_task = asyncio.create_task(self._webhook_worker())
+        
+        # Queue start notification
+        self._queue_webhook('start', {
+            'total': total, 
+            'concurrency': self.concurrency,
+            'length': os.environ.get('LENGTH', '2-32'),
+            'pattern': os.environ.get('PATTERN', 'mixed'),
+            'proxy_count': 0
+        })
         
         if not self.proxy_harvester.working_proxies:
             await self.proxy_harvester.harvest()
         
         if not self.proxy_harvester.working_proxies:
             print("[CHECK] ❌ No working proxies!")
-            if self.webhook:
-                await self.webhook.notify_error("No working proxies found after harvest")
+            self._queue_webhook('error', "No working proxies found after harvest")
+            self._progress_queue.put_nowait(('stop', None))
+            await webhook_task
             return []
         
-        if self.webhook:
-            best = self.proxy_harvester.working_proxies[0].latency if self.proxy_harvester.working_proxies else 0
-            await self.webhook.notify_proxies_ready(len(self.proxy_harvester.working_proxies), best)
+        # Queue proxies ready
+        best = self.proxy_harvester.working_proxies[0].latency if self.proxy_harvester.working_proxies else 0
+        self._queue_webhook('proxies', {
+            'working': len(self.proxy_harvester.working_proxies),
+            'best_latency': best
+        })
         
         print(f"[CHECK] Starting {total} usernames @ {self.concurrency} concurrency")
         
@@ -158,26 +193,44 @@ class DiscordUsernameChecker:
                 if result.available:
                     self.stats['available'] += 1
                     print(f"[HIT] 🎯 {result.username} AVAILABLE!")
-                    if self.webhook:
-                        await self.webhook.notify_hit(result)
+                    self._queue_webhook('hit', result)
                 elif result.error:
                     self.stats['errors'] += 1
                 
-                await self._send_progress(total)
+                # Progress webhook (throttled, non-blocking)
+                elapsed = time.time() - self.stats['start_time']
+                progress = (self.stats['checked'] / total) * 100 if total > 0 else 0
+                milestone = int(progress / 10) * 10
                 
+                if milestone > self._last_webhook_progress or self.stats['checked'] % 500 == 0:
+                    self._queue_webhook('progress', {
+                        'checked': self.stats['checked'],
+                        'total': total,
+                        'hits': self.stats['available'],
+                        'elapsed': elapsed,
+                        'proxies_alive': len(self.proxy_harvester.working_proxies)
+                    })
+                    self._last_webhook_progress = milestone
+                
+                # Console progress
                 if self.stats['checked'] % 100 == 0:
-                    elapsed = time.time() - self.stats['start_time']
                     rate = self.stats['checked'] / elapsed
                     print(f"[PROGRESS] {self.stats['checked']}/{total} | {rate:.1f}/s | Hits: {self.stats['available']} | Proxies: {len(self.proxy_harvester.working_proxies)}")
         
+        # Final stats
         elapsed = time.time() - self.stats['start_time']
         print(f"[DONE] {self.stats['checked']} in {elapsed:.1f}s | Hits: {self.stats['available']} | Errors: {self.stats['errors']}")
         
-        if self.webhook:
-            await self.webhook.notify_complete(
-                self.stats['checked'], self.stats['available'],
-                elapsed, self.stats['errors']
-            )
+        self._queue_webhook('complete', {
+            'checked': self.stats['checked'],
+            'hits': self.stats['available'],
+            'elapsed': elapsed,
+            'errors': self.stats['errors']
+        })
+        
+        # Stop webhook worker
+        self._progress_queue.put_nowait(('stop', None))
+        await webhook_task
         
         self._save_results()
         return self.results
