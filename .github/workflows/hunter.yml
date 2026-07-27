@@ -20,6 +20,11 @@ on:
         default: 'mixed'
         type: choice
         options: [short, words, mixed, leet]
+      length:
+        description: 'Username Length (e.g., 2, 2-4, 3+, 5)'
+        required: true
+        default: '2-32'
+        type: string
       concurrency:
         description: 'Concurrency'
         required: true
@@ -49,19 +54,15 @@ jobs:
     
     steps:
       - uses: actions/checkout@v4
-      
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
       - uses: actions/cache@v4
         with:
           path: proxies/
           key: proxies-${{ github.run_id }}
           restore-keys: proxies-
-      
       - run: pip install -r requirements.txt
-      
       - run: mkdir -p results proxies
       
       - name: Run Hunter
@@ -70,6 +71,7 @@ jobs:
           USERNAME_SOURCE: ${{ github.event.inputs.username_source }}
           GENERATE_COUNT: ${{ github.event.inputs.generate_count }}
           PATTERN: ${{ github.event.inputs.pattern }}
+          LENGTH: ${{ github.event.inputs.length }}
           CONCURRENCY: ${{ github.event.inputs.concurrency }}
           TIMEOUT: ${{ github.event.inputs.timeout }}
           WEBHOOK_URL: ${{ github.event.inputs.webhook_url }}
