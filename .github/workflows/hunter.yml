@@ -8,12 +8,9 @@ on:
         required: true
         default: 'generate'
         type: choice
-        options:
-          - generate
-          - file
-          - both
+        options: [generate, file, both]
       generate_count:
-        description: 'Number to generate (if generating)'
+        description: 'Number to generate'
         required: true
         default: '5000'
         type: string
@@ -22,35 +19,25 @@ on:
         required: true
         default: 'mixed'
         type: choice
-        options:
-          - short
-          - words
-          - mixed
-          - leet
+        options: [short, words, mixed, leet]
       concurrency:
-        description: 'Concurrency (speed)'
+        description: 'Concurrency'
         required: true
         default: '50'
         type: choice
-        options:
-          - '10'
-          - '50'
-          - '100'
+        options: ['10', '50', '100']
       timeout:
-        description: 'Request Timeout (seconds)'
+        description: 'Timeout (seconds)'
         required: true
         default: '10'
         type: choice
-        options:
-          - '5'
-          - '10'
-          - '20'
+        options: ['5', '10', '20']
       webhook_url:
-        description: 'Discord Webhook URL (optional)'
+        description: 'Discord Webhook (optional)'
         required: false
         type: string
       proxy_count:
-        description: 'Max Proxies to Harvest'
+        description: 'Max Proxies'
         required: true
         default: '300'
         type: string
@@ -61,26 +48,21 @@ jobs:
     timeout-minutes: 30
     
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
       
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       
-      - name: Cache Proxies
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: proxies/
           key: proxies-${{ github.run_id }}
           restore-keys: proxies-
       
-      - name: Install Dependencies
-        run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt
       
-      - name: Prepare Directories
-        run: mkdir -p results proxies
+      - run: mkdir -p results proxies
       
       - name: Run Hunter
         env:
@@ -94,26 +76,9 @@ jobs:
           PROXY_COUNT: ${{ github.event.inputs.proxy_count }}
         run: python run_hunter.py
       
-      - name: Upload Results
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
           name: hunter-results-${{ github.run_id }}
-          path: |
-            results/
-            proxies/working.json
+          path: results/
           retention-days: 7
-      
-      - name: Summary
-        if: always()
-        run: |
-          echo "## 🎯 Hunter Results" >> $GITHUB_STEP_SUMMARY
-          if [ -f results/all_hits.txt ]; then
-            HITS=$(wc -l < results/all_hits.txt)
-            echo "**Available usernames found: $HITS**" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            cat results/all_hits.txt >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          else
-            echo "No hits this run." >> $GITHUB_STEP_SUMMARY
-          fi
