@@ -1,160 +1,43 @@
+# checker.py - Modified entry point
 import asyncio
-import aiohttp
-import random
-import time
-import json
-import os
-from typing import List, Optional
-from dataclasses import dataclass, asdict
-from datetime import datetime
+import sys
 
-from .proxy_harvester import ProxyHarvester, Proxy
-from .discord_webhook import WebhookNotifier
-
-@dataclass
-class CheckResult:
-    username: str
-    available: bool
-    checked_at: str
-    proxy_used: Optional[str] = None
-    response_time: float = 0.0
-    error: Optional[str] = None
-
-class DiscordUsernameChecker:
-    def __init__(self, concurrency=50, timeout=10, delay_between=0.5, webhook_url=None, proxy_harvester=None):
-        self.concurrency = concurrency
-        self.timeout = aiohttp.ClientTimeout(total=timeout)
-        self.delay_between = delay_between
-        self.webhook = WebhookNotifier(webhook_url) if webhook_url else None
-        self.proxy_harvester = proxy_harvester or ProxyHarvester()
-        self.semaphore = asyncio.Semaphore(concurrency)
-        self.results = []
-        self.stats = {'checked': 0, 'available': 0, 'taken': 0, 'errors': 0, 'start_time': None}
+async def main():
+    # Check if running in workflow mode
+    import os
+    if os.path.exists('workflow_config.json'):
+        from wizard import run_auto_wizard
+        from engine import AsyncChecker
         
-    async def check_username(self, session: aiohttp.ClientSession, username: str) -> CheckResult:
-        async with self.semaphore:
-            start = time.time()
-            proxy = self.proxy_harvester.get_proxy()
-            proxy_str = str(proxy) if proxy else None
-            
-            try:
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Accept': '*/*',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                    'Content-Type': 'application/json',
-                    'Origin': 'https://discord.com',
-                    'Referer': 'https://discord.com/register'
+        config = await run_auto_wizard()
+        
+        # Send webhook notification that we're starting
+        if config.get('webhook'):
+            from engine import DiscordWebhookReporter
+            webhook = DiscordWebhookReporter(config['webhook'])
+            await webhook.send_report(
+                "🎯 **Starting CloudChecker**",
+                embed_data={
+                    "title": "🚀 Check Started",
+                    "description": f"Checking {len(config['usernames']):,} usernames",
+                    "color": 0x00ff00,
+                    "fields": [
+                        {"name": "Concurrency", "value": str(config['concurrency']), "inline": True},
+                        {"name": "Timeout", "value": f"{config['timeout']}s", "inline": True},
+                        {"name": "Proxies", "value": str(len(config['proxies'])), "inline": True}
+                    ]
                 }
-                
-                payload = {
-                    'username': username,
-                    'consent': True,
-                    'date_of_birth': '1990-01-01',
-                    'gift_code_sku_id': None,
-                    'captcha_key': None
-                }
-                
-                if proxy and proxy.protocol in ('http', 'https'):
-                    async with session.post(
-                        "https://discord.com/api/v9/auth/register",
-                        headers=headers, json=payload, proxy=proxy_str,
-                        timeout=self.timeout, ssl=False
-                    ) as resp:
-                        return self._parse_response(username, resp, time.time() - start, proxy_str)
-                else:
-                    async with session.post(
-                        "https://discord.com/api/v9/auth/register",
-                        headers=headers, json=payload,
-                        timeout=self.timeout, ssl=False
-                    ) as resp:
-                        return self._parse_response(username, resp, time.time() - start, proxy_str)
-                        
-            except asyncio.TimeoutError:
-                if proxy:
-                    self.proxy_harvester.mark_dead(proxy)
-                return CheckResult(username, False, datetime.now().isoformat(), proxy_str, time.time() - start, "timeout")
-            except Exception as e:
-                if proxy and 'proxy' in str(e).lower():
-                    self.proxy_harvester.mark_dead(proxy)
-                return CheckResult(username, False, datetime.now().isoformat(), proxy_str, time.time() - start, str(e))
-            
-            finally:
-                await asyncio.sleep(self.delay_between * random.uniform(0.8, 1.2))
-    
-    def _parse_response(self, username, resp, response_time, proxy_str):
-        timestamp = datetime.now().isoformat()
+            )
         
-        try:
-            data = resp.json() if hasattr(resp, 'json') else {}
-        except:
-            data = {}
-        
-        if resp.status == 400:
-            errors = data.get('errors', {})
-            if 'username' in errors:
-                return CheckResult(username, False, timestamp, proxy_str, response_time)
-            return CheckResult(username, False, timestamp, proxy_str, response_time, "bad_request")
-        
-        elif resp.status == 429:
-            return CheckResult(username, False, timestamp, proxy_str, response_time, "rate_limited")
-        
-        elif resp.status in (200, 201, 204):
-            return CheckResult(username, True, timestamp, proxy_str, response_time)
-        
-        else:
-            return CheckResult(username, False, timestamp, proxy_str, response_time, f"status_{resp.status}")
-    
-    async def run(self, usernames: List[str]) -> List[CheckResult]:
-        self.stats['start_time'] = time.time()
-        print(f"[CHECK] Starting {len(usernames)} usernames @ {self.concurrency} concurrency")
-        
-        if not self.proxy_harvester.working_proxies:
-            await self.proxy_harvester.harvest()
-        
-        if not self.proxy_harvester.working_proxies:
-            print("[CHECK] ❌ No working proxies!")
-            return []
-        
-        connector = aiohttp.TCPConnector(limit=self.concurrency * 2)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            tasks = [self.check_username(session, u) for u in usernames]
-            
-            for completed in asyncio.as_completed(tasks):
-                result = await completed
-                self.results.append(result)
-                self.stats['checked'] += 1
-                
-                if result.available:
-                    self.stats['available'] += 1
-                    print(f"[HIT] 🎯 {result.username} AVAILABLE!")
-                    if self.webhook:
-                        await self.webhook.notify_hit(result)
-                elif result.error:
-                    self.stats['errors'] += 1
-                
-                if self.stats['checked'] % 100 == 0:
-                    elapsed = time.time() - self.stats['start_time']
-                    rate = self.stats['checked'] / elapsed
-                    print(f"[PROGRESS] {self.stats['checked']}/{len(usernames)} | {rate:.1f}/s | Hits: {self.stats['available']} | Proxies: {len(self.proxy_harvester.working_proxies)}")
-        
-        elapsed = time.time() - self.stats['start_time']
-        print(f"[DONE] Checked {self.stats['checked']} in {elapsed:.1f}s | Hits: {self.stats['available']}")
-        self._save_results()
-        return self.results
-    
-    def _save_results(self):
-        os.makedirs('results', exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        with open(f'results/check_{timestamp}.json', 'w') as f:
-            json.dump([asdict(r) for r in self.results], f, indent=2)
-        
-        available = [r for r in self.results if r.available]
-        if available:
-            with open(f'results/hits_{timestamp}.txt', 'w') as f:
-                for r in available:
-                    f.write(f"{r.username}\n")
-            with open('results/all_hits.txt', 'a') as f:
-                for r in available:
-                    f.write(f"{r.username}\n")
+        checker = AsyncChecker(config)
+        await checker.run(config['usernames'])
+    else:
+        # Run normal interactive wizard
+        from wizard import run_interactive_wizard
+        config = await run_interactive_wizard()
+        from engine import AsyncChecker
+        checker = AsyncChecker(config)
+        await checker.run(config['usernames'])
+
+if __name__ == "__main__":
+    asyncio.run(main())
