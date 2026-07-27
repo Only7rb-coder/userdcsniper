@@ -50,12 +50,27 @@ class WebhookNotifier:
         await self._send({
             "username": "Hunter",
             "embeds": [{
-                "title": "🎯 HIT!",
-                "description": f"`{result.username}` is **AVAILABLE**!",
+                "title": "🎯✅ VERIFIED HIT!",
+                "description": f"`{result.username}` is **CONFIRMED AVAILABLE**!",
                 "color": 0x00ff00,
                 "fields": [
                     {"name": "Response", "value": f"{result.response_time:.2f}s", "inline": True},
-                    {"name": "Proxy", "value": result.proxy_used or "Direct", "inline": True}
+                    {"name": "Proxy", "value": result.proxy_used or "Direct", "inline": True},
+                    {"name": "Verified", "value": "✅ Double-checked", "inline": True}
+                ]
+            }]
+        })
+    
+    async def notify_watchlist_hit(self, username):
+        await self._send({
+            "username": "Hunter",
+            "embeds": [{
+                "title": "👁️✅ WATCHLIST DROP CONFIRMED!",
+                "description": f"`{username}` is **AVAILABLE** — double verified!",
+                "color": 0xff00ff,
+                "fields": [
+                    {"name": "Action", "value": "Claim it NOW!", "inline": False},
+                    {"name": "Verified", "value": "✅", "inline": True}
                 ]
             }]
         })
@@ -69,22 +84,9 @@ class WebhookNotifier:
                 "description": f"{pct:.1f}% | {checked}/{total}",
                 "color": 0x0099ff,
                 "fields": [
-                    {"name": "Hits", "value": str(hits), "inline": True},
+                    {"name": "Verified Hits", "value": f"🎯 {hits}", "inline": True},
                     {"name": "Rate", "value": f"{checked/elapsed:.1f}/s", "inline": True},
                     {"name": "Proxies", "value": str(proxies_alive), "inline": True}
-                ]
-            }]
-        })
-    
-    async def notify_watchlist_hit(self, username):
-        await self._send({
-            "username": "Hunter",
-            "embeds": [{
-                "title": "👁️ WATCHLIST DROP!",
-                "description": f"`{username}` just became **AVAILABLE**!",
-                "color": 0xff00ff,
-                "fields": [
-                    {"name": "Action", "value": "Claim it NOW!", "inline": False}
                 ]
             }]
         })
@@ -97,7 +99,7 @@ class WebhookNotifier:
                 "color": 0x00ff00 if hits > 0 else 0xff5555,
                 "fields": [
                     {"name": "Checked", "value": str(checked), "inline": True},
-                    {"name": "Hits", "value": f"🎯 {hits}", "inline": True},
+                    {"name": "Verified Hits", "value": f"🎯 {hits}", "inline": True},
                     {"name": "Time", "value": f"{elapsed/60:.1f}m", "inline": True}
                 ]
             }]
