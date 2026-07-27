@@ -7,9 +7,6 @@ import json
 import os
 from typing import List, Set, Tuple, Optional
 from dataclasses import dataclass
-import logging
-
-logger = logging.getLogger("proxy_harvester")
 
 @dataclass
 class Proxy:
@@ -20,119 +17,95 @@ class Proxy:
     alive: bool = False
     
     def __str__(self):
-        return f"{self.protocol}://{self.host}:{self.port}"
+        return f"http://{self.host}:{self.port}"  # Only HTTP, no SOCKS
 
-PROXY_SOURCES = {
-    'http': [
-        "https://api.proxyscrape.com/v2/?request=get&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all&simplified=true",
-        "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
-        "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
-        "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-    ],
-    'https': [
-        "https://api.proxyscrape.com/v2/?request=get&protocol=https&timeout=10000&country=all&ssl=all&anonymity=all&simplified=true",
-        "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/https.txt",
-    ],
-    'socks4': [
-        "https://api.proxyscrape.com/v2/?request=get&protocol=socks4&timeout=10000&country=all&ssl=all&anonymity=all&simplified=true",
-        "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks4.txt",
-        "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/socks4.txt",
-    ],
-    'socks5': [
-        "https://api.proxyscrape.com/v2/?request=get&protocol=socks5&timeout=10000&country=all&ssl=all&anonymity=all&simplified=true",
-        "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks5.txt",
-        "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/socks5.txt",
-    ]
-}
+PROXY_SOURCES = [
+    "https://api.proxyscrape.com/v2/?request=get&protocol=http&timeout=5000&country=all&ssl=all&anonymity=all&simplified=true",
+    "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
+    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
+    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+]
 
 class ProxyHarvester:
-    def __init__(self, max_proxies: int = 300, test_url: str = "https://discord.com/api/v9/users/@me"):
+    def __init__(self, max_proxies: int = 100):
         self.max_proxies = max_proxies
-        self.test_url = test_url
         self.working_proxies: List[Proxy] = []
-        self.semaphore = asyncio.Semaphore(50)
         
     async def fetch_source(self, session: aiohttp.ClientSession, url: str) -> Set[Tuple[str, int]]:
         proxies = set()
         try:
-            timeout = aiohttp.ClientTimeout(total=15)
-            async with session.get(url, timeout=timeout, ssl=False) as resp:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10), ssl=False) as resp:
                 if resp.status != 200:
                     return proxies
                 text = await resp.text()
                 pattern = r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})[:\s]+(\d{2,5})'
-                matches = re.findall(pattern, text)
-                for ip, port in matches:
+                for ip, port in re.findall(pattern, text):
                     try:
-                        port_num = int(port)
-                        if 1 <= port_num <= 65535:
-                            proxies.add((ip, port_num))
-                    except ValueError:
-                        continue
-        except Exception:
-            pass
+                        p = int(port)
+                        if 1 <= p <= 65535:
+                            proxies.add((ip, p))
+                    except:
+                        pass
+        except Exception as e:
+            print(f"[PROXY] Fetch failed: {url[:40]}... ({e})")
         return proxies
     
-    async def test_proxy(self, proxy: Proxy) -> Optional[Proxy]:
-        async with self.semaphore:
-            try:
+    async def test_proxy(self, proxy: Proxy) -> bool:
+        try:
+            timeout = aiohttp.ClientTimeout(total=3)  # AGGRESSIVE timeout
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 start = time.time()
-                if proxy.protocol in ('socks4', 'socks5'):
-                    try:
-                        from aiohttp_socks import ProxyConnector
-                        connector = ProxyConnector.from_url(str(proxy))
-                        timeout = aiohttp.ClientTimeout(total=8)
-                        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-                            async with session.get(self.test_url) as resp:
-                                if resp.status in (200, 401, 403):
-                                    proxy.latency = time.time() - start
-                                    proxy.alive = True
-                                    return proxy
-                    except ImportError:
-                        return None
-                else:
-                    timeout = aiohttp.ClientTimeout(total=8)
-                    async with aiohttp.ClientSession(timeout=timeout) as session:
-                        async with session.get(self.test_url, proxy=str(proxy), ssl=False) as resp:
-                            if resp.status in (200, 401, 403):
-                                proxy.latency = time.time() - start
-                                proxy.alive = True
-                                return proxy
-            except Exception:
-                pass
-            return None
+                async with session.get(
+                    "https://discord.com/api/v9/users/@me",
+                    proxy=str(proxy), ssl=False
+                ) as resp:
+                    if resp.status in (200, 401, 403):
+                        proxy.latency = time.time() - start
+                        proxy.alive = True
+                        return True
+        except:
+            pass
+        return False
     
     async def harvest(self) -> List[Proxy]:
-        print("[PROXY] Harvesting free proxies...")
+        print("[PROXY] Step 1: Fetching proxy lists...")
         all_proxies: Set[Tuple[str, int]] = set()
         
         async with aiohttp.ClientSession() as session:
-            tasks = []
-            for protocol, urls in PROXY_SOURCES.items():
-                for url in urls:
-                    tasks.append(self.fetch_source(session, url))
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for result in results:
-                if isinstance(result, set):
-                    all_proxies.update(result)
+            tasks = [self.fetch_source(session, url) for url in PROXY_SOURCES]
+            results = await asyncio.gather(*tasks)
+            for r in results:
+                all_proxies.update(r)
         
-        print(f"[PROXY] Collected {len(all_proxies)} raw proxies")
+        print(f"[PROXY] Fetched {len(all_proxies)} raw proxies")
         
-        proxy_objects = []
-        for ip, port in all_proxies:
-            proxy_objects.append(Proxy(ip, port, 'http'))
-            proxy_objects.append(Proxy(ip, port, 'socks5'))
+        if not all_proxies:
+            print("[PROXY] ❌ No proxies fetched! Running direct...")
+            return []
         
+        # Build proxy objects, limit to testable amount
+        proxy_objects = [Proxy(ip, port, 'http') for ip, port in list(all_proxies)[:self.max_proxies * 3]]
         random.shuffle(proxy_objects)
-        proxy_objects = proxy_objects[:self.max_proxies * 2]
         
-        print(f"[PROXY] Testing {len(proxy_objects)} proxies...")
-        test_tasks = [self.test_proxy(p) for p in proxy_objects]
-        results = await asyncio.gather(*test_tasks, return_exceptions=True)
+        print(f"[PROXY] Testing {len(proxy_objects)} proxies (3s timeout each)...")
         
-        working = [r for r in results if isinstance(r, Proxy) and r.alive]
+        # Test in small batches to avoid overwhelming
+        working = []
+        batch_size = 20
+        for i in range(0, len(proxy_objects), batch_size):
+            batch = proxy_objects[i:i+batch_size]
+            results = await asyncio.gather(*[self.test_proxy(p) for p in batch])
+            for proxy, ok in zip(batch, results):
+                if ok:
+                    working.append(proxy)
+                    print(f"[PROXY] ✓ {proxy.host}:{proxy.port} ({proxy.latency:.2f}s)")
+            
+            if len(working) >= self.max_proxies:
+                break
+            
+            print(f"[PROXY] Batch {i//batch_size + 1}: {len(working)} working so far...")
+        
         working.sort(key=lambda p: p.latency)
-        
         self.working_proxies = working[:self.max_proxies]
         print(f"[PROXY] ✅ {len(self.working_proxies)} working proxies ready")
         
@@ -141,10 +114,8 @@ class ProxyHarvester:
     def get_proxy(self) -> Optional[Proxy]:
         if not self.working_proxies:
             return None
-        if random.random() < 0.7 and len(self.working_proxies) > 10:
-            top_tier = self.working_proxies[:max(1, len(self.working_proxies) // 3)]
-            return random.choice(top_tier)
-        return random.choice(self.working_proxies)
+        return random.choice(self.working_proxies[:max(10, len(self.working_proxies)//3)] 
+                           if random.random() < 0.7 else self.working_proxies)
     
     def mark_dead(self, proxy: Proxy):
         if proxy in self.working_proxies:
