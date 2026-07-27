@@ -4,73 +4,83 @@ from typing import List, Iterator, Optional, Tuple
 import itertools
 
 class UsernameGenerator:
-    COMMON_WORDS = [
-        "alpha", "beta", "gamma", "neo", "crypto", "dark", "shadow",
-        "ghost", "night", "star", "moon", "fire", "ice", "dragon",
-        "wolf", "tiger", "hawk", "raven", "fox", "zero", "x", "z",
-        "apex", "prime", "elite", "pro", "max", "ultra", "mega",
-        "cyber", "tech", "cloud", "code", "byte", "pixel", "flux",
-        "pulse", "wave", "void", "nova", "galaxy", "nebula"
+    # Words that sound good, have character, might actually be available
+    RARE_WORDS = [
+        "abyssal", "boreal", "cryo", "drift", "ember", "fable", "glimmer",
+        "hollow", "iris", "jolt", "kismet", "lunar", "mire", "nexus", "omen",
+        "prism", "quill", "rift", "shroud", "tidal", "umbra", "vox", "wisp",
+        "xenon", "yield", "zenith", "aether", "blight", "cinder", "dusk",
+        "ethos", "frost", "gale", "hush", "ink", "jade", "keen", "lyric",
+        "myth", "noct", "onyx", "pulse", "quasar", "relic", "sol", "thrum",
+        "urn", "vex", "wraith", "xylo", "yew", "zeph", "arc", "bolt", "cusp",
+        "dirge", "echo", "flint", "goss", "hex", "io", "jinx", "kore", "lux",
+        "meld", "nigh", "or", "pact", "quay", "rove", "seer", "tome", "ultra",
+        "vial", "weft", "xyst", "yore", "zest"
     ]
     
-    SUFFIXES = ["", "x", "z", "tv", "gg", "yt", "hq", "io", "dev", "ai", "vr", "3d", "nft", "web3"]
-
+    COOL_SUFFIXES = ["", "x", "z", "ify", "ism", "oid", "ite", "ine", "ic", "al"]
+    
     @classmethod
     def _parse_length(cls, length_spec: str) -> Tuple[Optional[int], Optional[int]]:
         length_spec = length_spec.strip()
         if '-' in length_spec:
-            parts = length_spec.split('-')
-            return int(parts[0]), int(parts[1])
+            a, b = length_spec.split('-')
+            return int(a), int(b)
         elif '+' in length_spec:
             return int(length_spec.replace('+', '')), 32
         else:
-            exact = int(length_spec)
-            return exact, exact
+            return int(length_spec), int(length_spec)
 
     @classmethod
-    def generate(cls, count: int = 1000, pattern: str = "mixed", length: str = "2-32") -> Iterator[str]:
+    def generate(cls, count: int = 5000, pattern: str = "mixed", length: str = "5-7") -> Iterator[str]:
         min_len, max_len = cls._parse_length(length)
         generated = set()
         
-        def in_range(s: str) -> bool:
-            return min_len <= len(s) <= max_len
+        def ok(s): 
+            return min_len <= len(s) <= max_len and cls._is_valid(s)
 
-        if pattern in ('short', 'mixed'):
-            chars = string.ascii_lowercase + string.digits
-            for length_val in range(max(2, min_len), min(max_len + 1, 5)):
-                if len(generated) >= count:
-                    break
-                for combo in itertools.product(chars, repeat=length_val):
-                    if len(generated) >= count:
-                        break
-                    username = ''.join(combo)
-                    if in_range(username) and cls._is_valid(username):
-                        generated.add(username)
-                        yield username
-
+        # Strategy 1: Rare words + suffixes (highest chance of availability)
         if pattern in ('words', 'mixed'):
-            for word in cls.COMMON_WORDS:
+            for word in cls.RARE_WORDS:
                 if len(generated) >= count:
                     break
-                for suffix in cls.SUFFIXES:
-                    username = f"{word}{suffix}"
-                    if in_range(username) and cls._is_valid(username) and username not in generated:
-                        generated.add(username)
-                        yield username
-                    
-                    for num in range(0, 10000, 7):
-                        username = f"{word}{num}"
-                        if in_range(username) and cls._is_valid(username) and username not in generated:
-                            generated.add(username)
-                            yield username
-
+                for suffix in cls.COOL_SUFFIXES:
+                    variants = [
+                        f"{word}{suffix}",
+                        f"{suffix}{word}" if suffix else word,
+                        f"{word}_{suffix}" if suffix else word,
+                        f"{word}.{suffix}" if suffix else word,
+                    ]
+                    for v in variants:
+                        if ok(v) and v not in generated:
+                            generated.add(v)
+                            yield v
+        
+        # Strategy 2: Short random with structure (consonant-vowel pattern)
+        if pattern in ('short', 'mixed'):
+            vowels = "aeiou"
+            consonants = "bcdfghjklmnpqrstvwxyz"
+            for _ in range(min(count * 2, 10000)):
+                if len(generated) >= count:
+                    break
+                # CVCVC or VCVCV pattern - pronounceable
+                pattern_choice = random.choice([
+                    lambda: ''.join(random.choice(consonants) if i%2==0 else random.choice(vowels) for i in range(random.randint(min_len, max_len))),
+                    lambda: ''.join(random.choice(vowels) if i%2==0 else random.choice(consonants) for i in range(random.randint(min_len, max_len))),
+                ])
+                username = pattern_choice()
+                if ok(username) and username not in generated:
+                    generated.add(username)
+                    yield username
+        
+        # Strategy 3: Leet speak on rare words
         if pattern == 'leet':
-            leet_map = {'a': '4', 'e': '3', 'i': '1', 'o': '0', 's': '5', 't': '7'}
-            for word in cls.COMMON_WORDS[:50]:
+            leet_map = {'a': '4', 'e': '3', 'i': '1', 'o': '0', 's': '5', 't': '7', 'g': '9'}
+            for word in cls.RARE_WORDS[:40]:
                 if len(generated) >= count:
                     break
                 leet = ''.join(leet_map.get(c, c) for c in word)
-                if in_range(leet) and cls._is_valid(leet) and leet not in generated:
+                if ok(leet) and leet not in generated:
                     generated.add(leet)
                     yield leet
 
@@ -92,3 +102,17 @@ class UsernameGenerator:
                 return [line.strip().lower() for line in f if line.strip()]
         except FileNotFoundError:
             return []
+    
+    @classmethod
+    def generate_watchlist_variants(cls, base_names: List[str]) -> List[str]:
+        """Generate variations of watchlist names to monitor"""
+        variants = set(base_names)
+        for name in base_names:
+            # Common leet variations
+            leet = name.replace('a','4').replace('e','3').replace('i','1').replace('o','0')
+            variants.add(leet)
+            # With suffixes
+            for suffix in ['x', 'z', 'tv', 'gg', 'io']:
+                variants.add(f"{name}{suffix}")
+                variants.add(f"{name}_{suffix}")
+        return [v for v in variants if cls._is_valid(v)]
