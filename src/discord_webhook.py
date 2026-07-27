@@ -1,15 +1,14 @@
 import aiohttp
-import json
-from typing import Optional
-from dataclasses import asdict
 
 class WebhookNotifier:
     def __init__(self, webhook_url: str):
-        self.webhook_url = webhook_url
+        self.webhook_url = webhook_url.strip() if webhook_url else ""
+        if not self.webhook_url.startswith('http'):
+            raise ValueError("Invalid webhook URL")
     
     async def _send(self, payload: dict) -> bool:
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
                 async with session.post(
                     self.webhook_url,
                     json=payload,
