@@ -43,9 +43,10 @@ async def main():
     if source in ('generate', 'both'):
         count = int(os.environ.get('GENERATE_COUNT', 5000))
         pattern = os.environ.get('PATTERN', 'mixed')
-        generated = list(UsernameGenerator.generate(count, pattern))
+        length = os.environ.get('LENGTH', '2-32')  # <-- NEW
+        generated = list(UsernameGenerator.generate(count, pattern, length))
         usernames.extend(generated)
-        print(f"🎲 Generated {len(generated)} usernames ({pattern})")
+        print(f"🎲 Generated {len(generated)} usernames ({pattern}, length {length})")
     
     usernames = list(dict.fromkeys(usernames))
     if not usernames:
