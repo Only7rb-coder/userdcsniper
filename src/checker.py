@@ -107,12 +107,10 @@ class DiscordUsernameChecker:
             return CheckResult(username, False, timestamp, proxy_str, response_time, f"status_{resp.status}")
     
     async def _send_progress(self, total: int):
-        """Send progress webhook every 10% or 500 checks"""
         elapsed = time.time() - self.stats['start_time']
         progress = (self.stats['checked'] / total) * 100 if total > 0 else 0
-        
-        # Every 10% milestone or every 500 checks
         milestone = int(progress / 10) * 10
+        
         if milestone > self._last_webhook_progress or self.stats['checked'] % 500 == 0:
             if self.webhook:
                 await self.webhook.notify_progress(
@@ -125,16 +123,14 @@ class DiscordUsernameChecker:
         self.stats['start_time'] = time.time()
         total = len(usernames)
         
-        # Notify start
         if self.webhook:
             await self.webhook.notify_start(
                 total, self.concurrency, 
                 os.environ.get('LENGTH', '2-32'),
                 os.environ.get('PATTERN', 'mixed'),
-                0  # proxies unknown yet
+                0
             )
         
-        # Harvest proxies
         if not self.proxy_harvester.working_proxies:
             await self.proxy_harvester.harvest()
         
@@ -144,7 +140,6 @@ class DiscordUsernameChecker:
                 await self.webhook.notify_error("No working proxies found after harvest")
             return []
         
-        # Notify proxies ready
         if self.webhook:
             best = self.proxy_harvester.working_proxies[0].latency if self.proxy_harvester.working_proxies else 0
             await self.webhook.notify_proxies_ready(len(self.proxy_harvester.working_proxies), best)
@@ -168,20 +163,16 @@ class DiscordUsernameChecker:
                 elif result.error:
                     self.stats['errors'] += 1
                 
-                # Progress webhook
                 await self._send_progress(total)
                 
-                # Console progress
                 if self.stats['checked'] % 100 == 0:
                     elapsed = time.time() - self.stats['start_time']
                     rate = self.stats['checked'] / elapsed
                     print(f"[PROGRESS] {self.stats['checked']}/{total} | {rate:.1f}/s | Hits: {self.stats['available']} | Proxies: {len(self.proxy_harvester.working_proxies)}")
         
-        # Final stats
         elapsed = time.time() - self.stats['start_time']
         print(f"[DONE] {self.stats['checked']} in {elapsed:.1f}s | Hits: {self.stats['available']} | Errors: {self.stats['errors']}")
         
-        # Notify complete
         if self.webhook:
             await self.webhook.notify_complete(
                 self.stats['checked'], self.stats['available'],
